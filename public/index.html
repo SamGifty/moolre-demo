@@ -1,0 +1,279 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Moolre — Disbursement & SMS Demo</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="header card">
+      <div class="header-left">
+        <div class="logo">M</div>
+        <div class="header-texts">
+          <h1>Moolre API Integration</h1>
+          <p class="muted">Demo for Disbursement & SMS (proxy backend)</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <small class="version">Demo</small>
+      </div>
+    </header>
+
+    <main class="card">
+      <div class="tabs" role="tablist">
+        <button id="tab-disburse" class="tab active" onclick="switchTab(event,'disbursement')"> Disburse</button>
+        <button id="tab-sms" class="tab" onclick="switchTab(event,'sms')">💬 SMS</button>
+      </div>
+
+      <section class="tab-content">
+        <div id="responseArea"></div>
+
+        <!-- Disbursement panel -->
+        <div id="disbursement" class="tab-panel active">
+          <div class="form-row">
+            <div class="form-group">
+              <label>Account Number *</label>
+              <input id="accountNumber" type="text" placeholder="Enter account number" />
+            </div>
+            <div class="form-group">
+              <label>Bank Code *</label>
+              <input id="bankCode" type="text" placeholder="e.g., 030" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Account Name</label>
+            <div class="input-group">
+              <input id="accountName" type="text" placeholder="Click 'Validate Name' to fetch" readonly />
+              <button id="validateBtn" class="btn-validate" onclick="validateName()">Validate Name</button>
+            </div>
+            <div id="validationSuccess" class="validation-success" style="display:none">✓ Name validated successfully</div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Amount (GHS) *</label>
+              <input id="amount" type="number" step="0.01" placeholder="0.00" />
+            </div>
+            <div class="form-group">
+              <label>Reference</label>
+              <input id="reference" type="text" placeholder="Transaction reference" />
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label>Narration</label>
+            <textarea id="narration" rows="3" placeholder="Payment description"></textarea>
+          </div>
+
+          <div class="actions">
+            <button id="disbursementBtn" class="btn-primary" onclick="processDisbursement()">
+              <span id="disbursementBtnText"> Disburse Funds</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- SMS panel -->
+        <div id="sms" class="tab-panel">
+          <div class="form-group">
+            <label>Phone Number *</label>
+            <input id="phoneNumber" type="tel" placeholder="+233XXXXXXXXX" />
+          </div>
+          <div class="form-group">
+            <label>Sender ID</label>
+            <input id="senderId" type="text" placeholder="e.g., Moolre" />
+          </div>
+          <div class="form-group">
+            <label>Message *</label>
+            <textarea id="message" rows="5" placeholder="Enter your SMS message here..." oninput="updateCharCount()"></textarea>
+            <div class="char-count" id="charCount">Characters: 0 / 160</div>
+          </div>
+          <div class="actions">
+            <button id="smsBtn" class="btn-primary outline" onclick="sendSMS()">
+              <span id="smsBtnText">💬 Send SMS</span>
+            </button>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- <footer class="card config-note">
+      <h3>⚙️ Configuration</h3>
+      <p>Add your Moolre API key to <code>.env</code> as <code>MOOLRE_API_KEY</code>.</p>
+      <ul>
+        <li>Start server: <code>node server.js</code></li>
+        <li>Open: <code>http://localhost:3000</code></li>
+      </ul>
+    </footer> -->
+  </div>
+
+<script>
+// ===== CONFIGURATION - use backend proxy =====
+const API_CONFIG = {
+  baseURL: '/api',
+  endpoints: {
+    nameValidation: '/validate',
+    disbursement: '/transfer',
+    sms: '/send-sms'
+  }
+};
+
+// Utility UI helpers
+function showLoadingOnButton(btnId, text) {
+  const btn = document.getElementById(btnId);
+  btn.disabled = true;
+  btn.classList.add('loading');
+  const span = btn.querySelector('span');
+  if (span) span.textContent = text;
+}
+function hideLoadingOnButton(btnId, text) {
+  const btn = document.getElementById(btnId);
+  btn.disabled = false;
+  btn.classList.remove('loading');
+  const span = btn.querySelector('span');
+  if (span) span.textContent = text;
+}
+
+function showResponse(type, title, message, data = null) {
+  const area = document.getElementById('responseArea');
+  const cls = type === 'success' ? 'alert-success' : 'alert-error';
+  let html = `<div class="alert ${cls}"><h3>${title}</h3><p>${message}</p>`;
+  if (data) html += `<pre>${JSON.stringify(data, null, 2)}</pre>`;
+  html += `</div>`;
+  area.innerHTML = html;
+  // auto dismiss after 7s
+  setTimeout(() => { area.innerHTML = ''; }, 7000);
+}
+
+function switchTab(e, tabName) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  e.currentTarget.classList.add('active');
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.getElementById(tabName).classList.add('active');
+  document.getElementById('responseArea').innerHTML = '';
+}
+
+function updateCharCount() {
+  const msg = document.getElementById('message').value || '';
+  document.getElementById('charCount').textContent = `Characters: ${msg.length} / 160`;
+}
+
+// ===== API calls (frontend -> our backend proxy) =====
+async function validateName() {
+  const accountNumber = document.getElementById('accountNumber').value.trim();
+  const bankCode = document.getElementById('bankCode').value.trim();
+  if (!accountNumber || !bankCode) {
+    showResponse('error', 'Missing fields', 'Please enter both account number and bank code.');
+    return;
+  }
+  showLoadingOnButton('validateBtn', 'Validating...');
+  document.getElementById('validationSuccess').style.display = 'none';
+  try {
+    const res = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.nameValidation}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_number: accountNumber, bank_code: bankCode })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      document.getElementById('accountName').value = data.account_name || '';
+      document.getElementById('validationSuccess').style.display = 'flex';
+      showResponse('success', 'Validated', 'Account name fetched successfully', data);
+    } else {
+      showResponse('error', 'Validation Failed', data.message || 'Unable to validate account name', data);
+    }
+  } catch (err) {
+    console.error(err);
+    showResponse('error', 'Error', 'Unable to validate name. Check your server and internet connection.');
+  } finally {
+    hideLoadingOnButton('validateBtn', 'Validate Name');
+  }
+}
+
+async function processDisbursement() {
+  const accountNumber = document.getElementById('accountNumber').value.trim();
+  const accountName = document.getElementById('accountName').value.trim();
+  const bankCode = document.getElementById('bankCode').value.trim();
+  const amount = document.getElementById('amount').value.trim();
+  const reference = document.getElementById('reference').value.trim();
+  const narration = document.getElementById('narration').value.trim();
+
+  if (!accountNumber || !bankCode || !amount) {
+    showResponse('error', 'Missing fields', 'Please fill Account Number, Bank Code and Amount.');
+    return;
+  }
+
+  showLoadingOnButton('disbursementBtn', 'Processing...');
+  try {
+    const res = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.disbursement}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        account_number: accountNumber,
+        account_name: accountName,
+        bank_code: bankCode,
+        amount: parseFloat(amount),
+        reference,
+        narration
+      })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showResponse('success', 'Success', 'Funds disbursed successfully', data);
+      // clear fields
+      document.getElementById('accountNumber').value = '';
+      document.getElementById('accountName').value = '';
+      document.getElementById('bankCode').value = '';
+      document.getElementById('amount').value = '';
+      document.getElementById('reference').value = '';
+      document.getElementById('narration').value = '';
+    } else {
+      showResponse('error', 'Failed', data.message || 'Disbursement failed', data);
+    }
+  } catch (err) {
+    console.error(err);
+    showResponse('error', 'Error', 'Unable to process disbursement. Check your server and API key.');
+  } finally {
+    hideLoadingOnButton('disbursementBtn', ' Disburse Funds');
+  }
+}
+
+async function sendSMS() {
+  const phoneNumber = document.getElementById('phoneNumber').value.trim();
+  const message = document.getElementById('message').value.trim();
+  const senderId = document.getElementById('senderId').value.trim();
+
+  if (!phoneNumber || !message) {
+    showResponse('error', 'Missing fields', 'Please fill Phone Number and Message.');
+    return;
+  }
+
+  showLoadingOnButton('smsBtn', 'Sending...');
+  try {
+    const res = await fetch(`${API_CONFIG.baseURL}${API_CONFIG.endpoints.sms}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone_number: phoneNumber, message, sender_id: senderId })
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showResponse('success', 'Sent', 'SMS sent successfully', data);
+      document.getElementById('phoneNumber').value = '';
+      document.getElementById('message').value = '';
+      document.getElementById('senderId').value = '';
+      updateCharCount();
+    } else {
+      showResponse('error', 'Failed', data.message || 'Unable to send SMS', data);
+    }
+  } catch (err) {
+    console.error(err);
+    showResponse('error', 'Error', 'Unable to send SMS. Check your server and API key.');
+  } finally {
+    hideLoadingOnButton('smsBtn', ' Send SMS');
+  }
+}
+</script>
+</body>
+</html>
